@@ -1,0 +1,22 @@
+[
+    {
+        "name": "manim-chemistry",
+        "description": "manim-Chemistry is a Manim plugin specifically designed for creating chemistry-related animations. Unlike plugins that rely on external chemistry packages, manim-Chemistry primarily uses Manim's built-in tools in conjunction with .mol files and .csv databases. It focuses on visualizing fundamental chemistry concepts like the Periodic Table, 2D/3D molecular structures, and chemical reactions from scratch.  It intentionally avoids dependencies on external libraries like Mendeleev, RDKit, PyMOL, or Open Babel to minimize maintenance, though users can integrate them if desired."
+    },
+    {
+        "name": "manim-circuit",
+        "description": "manim-circuit is a Manim plugin focused on creating animations of electrical circuits. It provides custom Mobjects and VMobjects representing common electrical components such as resistors, inductors, and capacitors. Use this plugin to visualize circuit diagrams, current flow, and other electrical engineering concepts."
+    },
+    {
+        "name": "manim-dsa",
+        "description": "Manim Data Structures & Algorithms (Manim DSA) is a Manim plugin specifically designed for animating common data structures and algorithms. It's ideal for educators, students, and content creators who need to visually explain concepts like linked lists, trees, sorting algorithms, graph traversals, and more. Manim DSA provides a set of tools to bring these abstract computer science topics to life."
+    },
+    {
+        "name": "manim-ml",
+        "description": "ManimML is a Manim plugin dedicated to visualizing machine learning concepts. It offers a collection of pre-built animations for fundamental ML components and provides abstractions to simplify the creation of complex machine learning visualizations. Use this plugin to explain topics like neural networks, gradient descent, clustering, and other core machine learning algorithms. It focuses on providing building blocks rather than full, pre-made explanations."
+    },
+    {
+        "name": "manim-physics",
+        "description": "manim-physics is a 2D physics simulation plugin for Manim. It allows you to create animations of various physics concepts, including rigid body mechanics (e.g., collisions, rotations), electromagnetism (e.g., fields, forces), and waves. This plugin is suitable for simulating and visualizing a wide range of physical phenomena."
+    }
+]

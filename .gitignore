@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Add these lines to .gitignore
+models/kokoro-v0_19.onnx
+manim_docs/plugin_docs/manim-ml/examples/variational_autoencoder/autoencoder_models/saved_models/model_dim2.pth
+manim_docs/plugin_docs/manim-ml/examples/variational_autoencoder/autoencoder_models/saved_models/model_dim2_cnn.pth
