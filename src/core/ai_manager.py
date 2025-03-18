@@ -152,31 +152,41 @@ class AIManager:
         logger.info("AI Manager initialized")
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def solve_math_problem(self, query: Dict[str, Any]) -> str:
+    async def solve_math_problem(self, query: Union[str, Dict[str, Any]]) -> str:
         """
-        Use OpenAI's o3-mini model to solve mathematical problems or explain theorems.
+        Solves a mathematical problem or explains a mathematical concept.
         
         Args:
-            query: Dictionary containing the query and related information
+            query: Either a string containing the query or a dictionary containing the query and related information
             
         Returns:
             Comprehensive solution or explanation
         """
         if not self.openai_client:
             raise ValueError("OpenAI API key not provided")
+        
+        # Handle both string and dictionary inputs
+        if isinstance(query, str):
+            query_text = query
+            category = "not specified"
+            difficulty_level = "not specified"
+        else:
+            query_text = query['query']
+            category = query.get('category', 'not specified')
+            difficulty_level = query.get('difficulty_level', 'not specified')
             
-        logger.info(f"Solving math problem: {query['query']}")
+        logger.info(f"Solving math problem: {query_text}")
         
         # Construct the prompt
         prompt = f"""You are a world-class mathematician tasked with solving or explaining the following:
         
-{query['query']}
+{query_text}
 
 If this is a problem to solve, provide a step-by-step solution showing all your work.
 If this is a theorem or concept to explain, provide a clear explanation with definitions, importance, and examples.
 
-Category: {query.get('category', 'not specified')}
-Difficulty: {query.get('difficulty_level', 'not specified')}
+Category: {category}
+Difficulty: {difficulty_level}
 
 Your response should be comprehensive, mathematically rigorous, and educational."""
 
@@ -206,27 +216,35 @@ Your response should be comprehensive, mathematically rigorous, and educational.
         return explanation
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def create_animation_plan(self, query: Dict[str, Any], explanation: str) -> AnimationPlan:
+    async def create_animation_plan(self, query: Union[str, Dict[str, Any]], explanation: str) -> AnimationPlan:
         """
-        Use GPT-4o to create a structured animation plan for the video.
+        Creates a structured animation plan for the video.
         
         Args:
-            query: Dictionary containing the query and related information
-            explanation: Mathematical explanation from o3-mini
+            query: Either a string containing the query or a dictionary containing the query and related information
+            explanation: Mathematical explanation or solution
             
         Returns:
             Structured animation plan
         """
         if not self.openai_client:
             raise ValueError("OpenAI API key not provided")
+        
+        # Handle both string and dictionary inputs
+        if isinstance(query, str):
+            query_text = query
+            category = "concept"
+        else:
+            query_text = query.get('query', '')
+            category = query.get('category', 'concept')
             
-        logger.info(f"Creating animation plan for: {query['query']}")
+        logger.info(f"Creating animation plan for: {query_text}")
         
         # Construct the prompt
         prompt = f"""You are an expert animation planner for mathematical videos. 
 Your task is to create a detailed, structured plan for a Manim animation that explains the following:
 
-QUERY: {query['query']}
+QUERY: {query_text}
 
 MATHEMATICAL EXPLANATION:
 {explanation}
@@ -270,11 +288,11 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("gpt-4o", prompt, category=query.get('category', 'concept'))
+            cached_response = self.response_cache.get_cached_response("gpt-4o", prompt, category=category)
             if cached_response:
                 logger.info("Using cached GPT-4o animation plan")
                 plan = json.loads(cached_response)
-                return self.animation_planner.enhance_plan(plan, explanation, query.get('category', 'concept'))
+                return self.animation_planner.enhance_plan(plan, explanation, category)
 
         # Call the OpenAI GPT-4o model
         response = self.openai_client.chat.completions.create(
@@ -284,8 +302,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=4000
+            temperature=0.2
         )
         
         # Parse the JSON response
@@ -298,33 +315,41 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
         
         # Cache the response if enabled
         if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("gpt-4o", prompt, plan_json, category=query.get('category', 'concept'))
+            self.response_cache.set_cached_response("gpt-4o", prompt, plan_json, category=category)
         
-        return self.animation_planner.enhance_plan(animation_plan, explanation, query.get('category', 'concept'))
+        return self.animation_planner.enhance_plan(animation_plan, explanation, category)
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def generate_script(self, query: Dict[str, Any], explanation: str, animation_plan: AnimationPlan) -> Dict[str, str]:
+    async def generate_script(self, animation_plan: AnimationPlan, explanation: str = None, query: Union[str, Dict[str, Any]] = None) -> Dict[str, str]:
         """
-        Generate a narration script for the video using GPT-4o.
+        Generate a narration script for the video.
         
         Args:
-            query: Dictionary containing the query and related information
-            explanation: Mathematical explanation
             animation_plan: Structured animation plan
+            explanation: Mathematical explanation (optional)
+            query: Either a string containing the query or a dictionary containing the query and related information (optional)
             
         Returns:
             Dictionary mapping section IDs to script text
         """
         if not self.openai_client:
             raise ValueError("OpenAI API key not provided")
-            
+        
+        # Handle query parameter if provided
+        query_text = ""
+        if query:
+            if isinstance(query, str):
+                query_text = query
+            else:
+                query_text = query.get('query', '')
+                
         logger.info("Generating narration script")
         
         # Construct the prompt
         prompt = f"""You are an expert educational scriptwriter. 
 Create a natural, engaging narration script for a mathematical video explaining:
 
-QUERY: {query['query']}
+QUERY: {query_text}
 
 The script should align with this animation plan:
 {json.dumps(animation_plan.dict(), indent=2)}
@@ -362,8 +387,7 @@ Your narration should be timed to match the specified durations in the animation
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.3,
-            max_tokens=4000
+            temperature=0.3
         )
         
         # Parse the JSON response
@@ -379,14 +403,14 @@ Your narration should be timed to match the specified durations in the animation
         return script
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=3, max=15))
-    async def generate_manim_code(self, query: Dict[str, Any], animation_plan: AnimationPlan, scripts: Dict[str, str]) -> str:
+    async def generate_manim_code(self, animation_plan: AnimationPlan, scripts: Dict[str, str], query: Union[str, Dict[str, Any]] = None) -> str:
         """
-        Generate Manim code using Claude 3.7 to create the animations.
+        Generate Manim code to create the animations.
         
         Args:
-            query: Dictionary containing the query and related information
             animation_plan: Structured animation plan
             scripts: Narration scripts for each section
+            query: Either a string containing the query or a dictionary containing the query and related information (optional)
             
         Returns:
             Manim Python code
@@ -396,11 +420,19 @@ Your narration should be timed to match the specified durations in the animation
             
         logger.info("Generating Manim code")
         
+        # Handle query parameter if provided
+        query_text = ""
+        if query:
+            if isinstance(query, str):
+                query_text = query
+            else:
+                query_text = query.get('query', '')
+        
         # Construct the prompt
         prompt = f"""You are an expert Manim programmer creating educational mathematics videos.
 
 Generate complete, executable Manim code for a video that explains:
-QUERY: {query['query']}
+QUERY: {query_text}
 
 Following this animation plan:
 {json.dumps(animation_plan.dict(), indent=2)}
@@ -435,15 +467,15 @@ Focus on correctness and precise timing for audio-visual synchronization."""
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("claude-3-7-sonnet-20240229", prompt)
+            cached_response = self.response_cache.get_cached_response("claude-3-7-sonnet-latest", prompt)
             if cached_response:
                 logger.info("Using cached Claude Manim code")
                 return cached_response
 
         # Call the Anthropic Claude 3.7 model
-        response = asyncio.to_thread(
+        response = await asyncio.to_thread(
             self.anthropic_client.messages.create,
-            model="claude-3-7-sonnet-20240229",
+            model="claude-3-7-sonnet-latest",
             max_tokens=4000,
             temperature=0.2,
             system="You are an expert Manim programmer who creates high-quality, executable code for mathematical animations. Focus on writing clean, correct, and optimized code.",
@@ -469,16 +501,16 @@ Focus on correctness and precise timing for audio-visual synchronization."""
         
         # Cache the response if enabled
         if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("claude-3-7-sonnet-20240229", prompt, manim_code)
+            self.response_cache.set_cached_response("claude-3-7-sonnet-latest", prompt, manim_code)
         
         return manim_code
     
-    async def generate_content_concurrently(self, query: Dict[str, Any], explanation: str, animation_plan: AnimationPlan) -> Tuple[Dict[str, str], str]:
+    async def generate_content_concurrently(self, query: Union[str, Dict[str, Any]], explanation: str, animation_plan: AnimationPlan) -> Tuple[Dict[str, str], str]:
         """
         Generate the script and Manim code concurrently for maximum performance.
         
         Args:
-            query: Dictionary containing the query and related information
+            query: Either a string containing the query or a dictionary containing the query and related information
             explanation: Mathematical explanation
             animation_plan: Structured animation plan
             
@@ -488,13 +520,13 @@ Focus on correctness and precise timing for audio-visual synchronization."""
         logger.info("Starting concurrent content generation")
         
         # Start both tasks concurrently
-        script_task = asyncio.create_task(self.generate_script(query, explanation, animation_plan))
+        script_task = asyncio.create_task(self.generate_script(animation_plan, explanation, query))
         
         # We need to wait for the script before generating Manim code
         scripts = await script_task
         
         # Generate Manim code with the scripts
-        manim_code = await self.generate_manim_code(query, animation_plan, scripts)
+        manim_code = await self.generate_manim_code(animation_plan, scripts, query)
         
         logger.info("Concurrent content generation completed")
         return scripts, manim_code
@@ -507,7 +539,7 @@ Focus on correctness and precise timing for audio-visual synchronization."""
             Dictionary of model usage metrics
         """
         return {
-            "tokens": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-20240229": 0},
-            "calls": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-20240229": 0},
-            "cache_hits": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-20240229": 0}
+            "tokens": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0},
+            "calls": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0},
+            "cache_hits": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0}
         } 

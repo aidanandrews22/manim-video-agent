@@ -1,0 +1,151 @@
+{
+  "title": "Solving the Quadratic Equation x² - 5x + 6 = 0",
+  "sections": [
+    {
+      "id": "section1",
+      "title": "Introduction to Quadratic Equations",
+      "duration": 5.36,
+      "narration_summary": "Introduce the quadratic equation and its general form.",
+      "visual_elements": [
+        {
+          "type": "text",
+          "content": "Quadratic Equation: x² - 5x + 6 = 0",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "We are given the quadratic equation x squared minus 5x plus 6 equals zero."
+        },
+        {
+          "type": "equation",
+          "content": "ax² + bx + c = 0",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "A quadratic equation generally has the form ax squared plus bx plus c equals zero."
+        }
+      ]
+    },
+    {
+      "id": "section2",
+      "title": "Recognizing the Form",
+      "duration": 4.94,
+      "narration_summary": "Identify the coefficients a, b, and c.",
+      "visual_elements": [
+        {
+          "type": "text",
+          "content": "a = 1, b = -5, c = 6",
+          "animation": "Transform",
+          "duration": 5.0,
+          "sync_with_narration": "In our case, a equals 1, b equals negative 5, and c equals 6."
+        }
+      ]
+    },
+    {
+      "id": "section3",
+      "title": "Factoring the Quadratic",
+      "duration": 6.5,
+      "narration_summary": "Explain how to factor the quadratic equation.",
+      "visual_elements": [
+        {
+          "type": "equation",
+          "content": "r × s = 6 and r + s = 5",
+          "animation": "Write",
+          "duration": 10.0,
+          "sync_with_narration": "We look for two numbers that multiply to 6 and add up to 5."
+        },
+        {
+          "type": "text",
+          "content": "r = 2, s = 3",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "The numbers are 2 and 3."
+        },
+        {
+          "type": "equation",
+          "content": "(x - 2)(x - 3)",
+          "animation": "Transform",
+          "duration": 10.0,
+          "sync_with_narration": "Thus, the quadratic can be written as x minus 2 times x minus 3."
+        }
+      ]
+    },
+    {
+      "id": "section4",
+      "title": "Solving for x",
+      "duration": 5.779999999999999,
+      "narration_summary": "Apply the Zero Product Property to find the solutions.",
+      "visual_elements": [
+        {
+          "type": "equation",
+          "content": "(x - 2)(x - 3) = 0",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "We apply the Zero Product Property to the equation."
+        },
+        {
+          "type": "equation",
+          "content": "x - 2 = 0 or x - 3 = 0",
+          "animation": "Transform",
+          "duration": 10.0,
+          "sync_with_narration": "Set each factor equal to zero."
+        },
+        {
+          "type": "text",
+          "content": "x = 2, x = 3",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "The solutions are x equals 2 and x equals 3."
+        }
+      ]
+    },
+    {
+      "id": "section5",
+      "title": "Conclusion and Importance",
+      "duration": 6.2,
+      "narration_summary": "Summarize the solution and discuss the importance of quadratic equations.",
+      "visual_elements": [
+        {
+          "type": "text",
+          "content": "Quadratic equations are essential in various fields.",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "Quadratic equations appear frequently in numerous areas of mathematics, physics, engineering, and economics."
+        }
+      ]
+    },
+    {
+      "id": "section6",
+      "title": "Example Problem",
+      "duration": 5.5,
+      "narration_summary": "Provide an additional example to reinforce learning.",
+      "visual_elements": [
+        {
+          "type": "equation",
+          "content": "x² - 9x + 18 = 0",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "Consider finding the roots of the quadratic equation x squared minus 9x plus 18 equals zero."
+        },
+        {
+          "type": "equation",
+          "content": "(x - 3)(x - 6) = 0",
+          "animation": "Transform",
+          "duration": 10.0,
+          "sync_with_narration": "The factorization is x minus 3 times x minus 6 equals zero."
+        },
+        {
+          "type": "text",
+          "content": "x = 3, x = 6",
+          "animation": "FadeIn",
+          "duration": 5.0,
+          "sync_with_narration": "Giving the solutions x equals 3 and x equals 6."
+        }
+      ]
+    }
+  ],
+  "estimated_duration": 34.28,
+  "visual_style": {
+    "color_theme": "dark",
+    "font_size": "medium",
+    "background_color": "#1C1C1C",
+    "accent_color": "#3B82F6"
+  }
+}

@@ -48,7 +48,7 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
     )
     
     with open(output_path / "animation_plan.json", "w") as f:
-        f.write(animation_plan.json(indent=2))
+        f.write(animation_plan.model_dump_json(indent=2))
     
     # Step 3: Generate script
     logger.info("Generating script...")
@@ -70,7 +70,7 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
     logger.info(f"Video generation complete. Files saved to {output_path}")
     
     # Log usage statistics
-    usage_stats = ai_manager.get_usage_statistics()
+    usage_stats = ai_manager.get_model_usage()
     logger.info(f"AI usage statistics: {usage_stats}")
 
 
