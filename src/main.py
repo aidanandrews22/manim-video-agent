@@ -7,10 +7,13 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import sys
 
 from src.config.config import Config
 from src.core.ai_manager import AIManager
-from src.core.animation_planner import AnimationPlan
+from src.core.animation_planner import AnimationPlan, Scene
+from src.utils.kokoro_voiceover import generate_audio_for_scenes
+from src.utils.video_utils import process_scene_videos, create_final_video
 from src.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -33,45 +36,69 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
     # Initialize AI manager
     ai_manager = AIManager(config, use_cache=use_cache)
     
-    # Step 1: Solve the math problem
+    # Step 1: Solve the math problem with o3-mini
     logger.info("Solving the math problem...")
-    solution = await ai_manager.solve_math_problem(problem)
+    solution = await ai_manager.solve_or_explain(problem)
     
     with open(output_path / "solution.txt", "w") as f:
         f.write(solution)
     
-    # Step 2: Create animation plan
-    logger.info("Creating animation plan...")
-    animation_plan = await ai_manager.create_animation_plan(
-        problem,
-        solution
+    # Step 2: Create scene-based animation plan with o3-mini
+    logger.info("Creating scene-based animation plan...")
+    scene_plan = await ai_manager.create_scene_plan(problem, solution)
+    
+    with open(output_path / "scene_plan.json", "w") as f:
+        json.dump(scene_plan, f, indent=2)
+    
+    # Step 3: Process each scene using Gemini and Claude
+    scenes = []
+    for scene_data in scene_plan.get("scenes", []):
+        logger.info(f"Processing scene: {scene_data.get('id', 'unknown')}")
+        
+        scene = await ai_manager.process_scene(
+            scene_data=scene_data,
+            query=problem,
+            explanation=solution,
+            output_dir=output_path
+        )
+        
+        scenes.append(scene)
+    
+    # Save the list of scenes
+    scenes_data = [scene.model_dump() for scene in scenes]
+    with open(output_path / "scenes.json", "w") as f:
+        json.dump(scenes_data, f, indent=2)
+    
+    # Step 4 & 5: Generate audio and video for each scene in parallel
+    logger.info("Generating audio and video code concurrently for all scenes...")
+    
+    # Use the async version for batch processing of all scenes
+    scenes_with_audio = await generate_audio_for_scenes(scenes, output_path)
+    
+    # Step 6: Process videos with the audio
+    logger.info("Processing videos for all scenes...")
+    final_scenes = await process_scene_videos(
+        scenes_with_audio, 
+        output_path, 
+        ai_manager=ai_manager,
+        max_retries=None  # No limit on retries
     )
     
-    with open(output_path / "animation_plan.json", "w") as f:
-        f.write(animation_plan.model_dump_json(indent=2))
+    # Step 7: Stitch all scene videos together
+    logger.info("Creating final video...")
+    final_video_path = str(output_path / "final_video.mp4")
+    final_video = create_final_video(final_scenes, final_video_path)
     
-    # Step 3: Generate script
-    logger.info("Generating script...")
-    script = await ai_manager.generate_script(animation_plan)
-    
-    with open(output_path / "script.json", "w") as f:
-        json.dump(script, f, indent=2)
-    
-    # Step 4: Generate Manim code
-    logger.info("Generating Manim code...")
-    manim_code = await ai_manager.generate_manim_code(animation_plan, script)
-    
-    with open(output_path / "animation.py", "w") as f:
-        f.write(manim_code)
-    
-    # Step 5: Run the Manim code (optional)
-    # This would require Manim to be installed and configured
-    
-    logger.info(f"Video generation complete. Files saved to {output_path}")
+    if final_video:
+        logger.info(f"Video generation complete. Final video saved to {final_video}")
+    else:
+        logger.error("Failed to create final video")
     
     # Log usage statistics
     usage_stats = ai_manager.get_model_usage()
     logger.info(f"AI usage statistics: {usage_stats}")
+    
+    return final_video
 
 
 def main():
@@ -84,6 +111,19 @@ def main():
     
     # Load configuration
     config = Config()
+    
+    # Check for required API keys
+    if not config.OPENAI_API_KEY:
+        logger.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+        sys.exit(1)
+    
+    if not config.ANTHROPIC_API_KEY:
+        logger.error("Anthropic API key not found. Please set the ANTHROPIC_API_KEY environment variable.")
+        sys.exit(1)
+    
+    if not config.GEMINI_API_KEY:
+        logger.error("Gemini API key not found. Please set the GEMINI_API_KEY environment variable.")
+        sys.exit(1)
     
     # Run the video generation process
     asyncio.run(generate_video(args.problem, args.output, config, use_cache=not args.no_cache))

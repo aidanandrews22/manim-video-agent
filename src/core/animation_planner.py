@@ -24,6 +24,20 @@ class VisualElement(BaseModel):
     sync_with_narration: Optional[str] = Field(None, description="Text that should be spoken during this element")
 
 
+class Scene(BaseModel):
+    """Schema for a scene in the animation."""
+    id: str = Field(..., description="Unique identifier for the scene")
+    title: str = Field(..., description="Title of the scene")
+    duration: float = Field(..., description="Duration in seconds")
+    narration: str = Field(..., description="Script for the scene")
+    animation_plan: Dict[str, Any] = Field(..., description="Animation plan for the scene")
+    original_query: str = Field(..., description="Original query provided by the user")
+    original_solution: str = Field(..., description="Original solution provided by the AI")
+    manim_code: Optional[str] = Field(None, description="Manim code for the scene")
+    audio_file: Optional[str] = Field(None, description="Path to the generated audio file")
+    video_file: Optional[str] = Field(None, description="Path to the generated video file")
+
+
 class Section(BaseModel):
     """Schema for a section in the animation plan."""
     id: str = Field(..., description="Unique identifier for the section")
@@ -57,6 +71,7 @@ class AnimationPlan(BaseModel):
     """Schema for the complete animation plan."""
     title: str = Field(..., description="Title of the video")
     sections: List[Section] = Field(..., description="List of sections in the animation")
+    scenes: Optional[List[Scene]] = Field(None, description="List of scenes in the animation")
     estimated_duration: float = Field(..., description="Estimated duration in seconds")
     visual_style: VisualStyle = Field(..., description="Visual style guidelines")
     

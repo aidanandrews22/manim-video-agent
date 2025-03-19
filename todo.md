@@ -1,0 +1,5 @@
+- [x] Code generation needs to happen at the same time as audio generation
+- [x] Give claude the script so it knows what to generate for video (so it coincides)
+- [x] Tell claude explicitly that it only needs to generate video and that audio is already provided
+- [x] Emphasize generating meaningful animations and long explanatory video with captions (make sure it generates as many tokens as possible)
+- [x] Tell claude it does not need to generate voice overs

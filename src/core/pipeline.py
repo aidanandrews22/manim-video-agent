@@ -79,7 +79,7 @@ class VideoGenerationPipeline:
             
             # Stage 2: Solve/explain problem with o3-mini
             self.progress.start_stage("problem_solving")
-            explanation = await self.ai_manager.solve_math_problem(query_dict)
+            explanation = await self.ai_manager.solve_or_explain(query_dict)
             self.progress.end_stage("problem_solving")
             
             # Stage 3: Create animation plan with GPT-4o

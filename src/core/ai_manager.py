@@ -15,13 +15,19 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 import logging
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential
+import re
+import time
+import random
 
 from openai import OpenAI, AsyncOpenAI
+# These imports will be used for model name references only
+# We're keeping them to maintain compatibility with the existing code
 from anthropic import Anthropic
+import google.generativeai as genai
 
 from src.config.config import Config
 from src.utils.logging_utils import get_logger
-from src.core.animation_planner import AnimationPlan, AnimationPlanner
+from src.core.animation_planner import AnimationPlan, AnimationPlanner, Scene
 
 logger = get_logger(__name__)
 
@@ -139,9 +145,33 @@ class AIManager:
         self.config = config
         self.use_cache = use_cache
         
-        # Initialize clients
-        self.openai_client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.anthropic_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        # Initialize OpenRouter client for all model providers
+        self.openai_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=config.OPEN_ROUTER_API_KEY
+        )
+        
+        # Initialize AsyncOpenAI as well for async requests
+        self.async_openai_client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=config.OPEN_ROUTER_API_KEY
+        )
+        
+        # Set up OpenRouter headers
+        self.openrouter_headers = {
+            "HTTP-Referer": "https://manim-video-agent.example.com",
+            "X-Title": "Manim Video Agent"
+        }
+        
+        # We don't initialize actual Anthropic or Gemini clients anymore
+        # Just set flags to track if they're configured
+        self.anthropic_configured = bool(config.ANTHROPIC_API_KEY)
+        
+        # Initialize Gemini flag if configured
+        if config.GEMINI_API_KEY:
+            self.gemini_configured = True
+        else:
+            self.gemini_configured = False
         
         # Initialize cache if enabled
         self.response_cache = ResponseCache() if use_cache else None
@@ -149,12 +179,19 @@ class AIManager:
         # Initialize animation planner
         self.animation_planner = AnimationPlanner()
         
-        logger.info("AI Manager initialized")
+        logger.info("AI Manager initialized with OpenRouter")
+        
+        # Model usage tracking
+        self.model_usage = {
+            "openai/o3-mini": {"prompt_tokens": 0, "completion_tokens": 0},
+            "anthropic/claude-3.7-sonnet": {"prompt_tokens": 0, "completion_tokens": 0},
+            "google/gemini-flash-1.5": {"prompt_tokens": 0, "completion_tokens": 0}
+        }
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    async def solve_math_problem(self, query: Union[str, Dict[str, Any]]) -> str:
+    async def solve_or_explain(self, query: Union[str, Dict[str, Any]]) -> str:
         """
-        Solves a mathematical problem or explains a mathematical concept.
+        Solves a problem or explains a concept.
         
         Args:
             query: Either a string containing the query or a dictionary containing the query and related information
@@ -163,7 +200,7 @@ class AIManager:
             Comprehensive solution or explanation
         """
         if not self.openai_client:
-            raise ValueError("OpenAI API key not provided")
+            raise ValueError("OpenRouter API key not provided")
         
         # Handle both string and dictionary inputs
         if isinstance(query, str):
@@ -178,7 +215,7 @@ class AIManager:
         logger.info(f"Solving math problem: {query_text}")
         
         # Construct the prompt
-        prompt = f"""You are a world-class mathematician tasked with solving or explaining the following:
+        prompt = f"""You are a world-class teacher tasked with solving or explaining the following:
         
 {query_text}
 
@@ -188,22 +225,23 @@ If this is a theorem or concept to explain, provide a clear explanation with def
 Category: {category}
 Difficulty: {difficulty_level}
 
-Your response should be comprehensive, mathematically rigorous, and educational."""
+Your response should be comprehensive, mathematically rigorous, and educational. Be as detailed and descriptive as possible."""
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("o3-mini", prompt)
+            cached_response = self.response_cache.get_cached_response("openai/o3-mini", prompt)
             if cached_response:
                 logger.info("Using cached o3-mini response")
                 return cached_response
 
         # Call the OpenAI o3-mini model
         response = self.openai_client.chat.completions.create(
-            model="o3-mini",
+            model="openai/o3-mini",
             messages=[
                 {"role": "system", "content": "You are a brilliant mathematician who explains concepts clearly and solves problems with precision."},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            extra_headers=self.openrouter_headers
         )
         
         explanation = response.choices[0].message.content
@@ -211,7 +249,7 @@ Your response should be comprehensive, mathematically rigorous, and educational.
         
         # Cache the response if enabled
         if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("o3-mini", prompt, explanation)
+            self.response_cache.set_cached_response("openai/o3-mini", prompt, explanation)
         
         return explanation
     
@@ -228,7 +266,7 @@ Your response should be comprehensive, mathematically rigorous, and educational.
             Structured animation plan
         """
         if not self.openai_client:
-            raise ValueError("OpenAI API key not provided")
+            raise ValueError("OpenRouter API key not provided")
         
         # Handle both string and dictionary inputs
         if isinstance(query, str):
@@ -288,7 +326,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("gpt-4o", prompt, category=category)
+            cached_response = self.response_cache.get_cached_response("openai/gpt-4o", prompt, category=category)
             if cached_response:
                 logger.info("Using cached GPT-4o animation plan")
                 plan = json.loads(cached_response)
@@ -296,13 +334,14 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
 
         # Call the OpenAI GPT-4o model
         response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="openai/gpt-4o",
             messages=[
                 {"role": "system", "content": "You are an expert animation planner for mathematical educational videos."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.2
+            temperature=0.2,
+            extra_headers=self.openrouter_headers
         )
         
         # Parse the JSON response
@@ -315,7 +354,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
         
         # Cache the response if enabled
         if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("gpt-4o", prompt, plan_json, category=category)
+            self.response_cache.set_cached_response("openai/gpt-4o", prompt, plan_json, category=category)
         
         return self.animation_planner.enhance_plan(animation_plan, explanation, category)
     
@@ -333,7 +372,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
             Dictionary mapping section IDs to script text
         """
         if not self.openai_client:
-            raise ValueError("OpenAI API key not provided")
+            raise ValueError("OpenRouter API key not provided")
         
         # Handle query parameter if provided
         query_text = ""
@@ -374,20 +413,21 @@ Your narration should be timed to match the specified durations in the animation
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("gpt-4o", prompt)
+            cached_response = self.response_cache.get_cached_response("openai/gpt-4o", prompt)
             if cached_response:
                 logger.info("Using cached GPT-4o script")
                 return json.loads(cached_response)
 
         # Call the OpenAI GPT-4o model
         response = self.openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="openai/gpt-4o",
             messages=[
                 {"role": "system", "content": "You are an expert educational scriptwriter for mathematical videos."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
-            temperature=0.3
+            temperature=0.3,
+            extra_headers=self.openrouter_headers
         )
         
         # Parse the JSON response
@@ -398,7 +438,7 @@ Your narration should be timed to match the specified durations in the animation
         
         # Cache the response if enabled
         if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("gpt-4o", prompt, script_json)
+            self.response_cache.set_cached_response("openai/gpt-4o", prompt, script_json)
         
         return script
     
@@ -415,8 +455,8 @@ Your narration should be timed to match the specified durations in the animation
         Returns:
             Manim Python code
         """
-        if not self.anthropic_client:
-            raise ValueError("Anthropic API key not provided")
+        if not self.openai_client:
+            raise ValueError("OpenRouter API key not provided")
             
         logger.info("Generating Manim code")
         
@@ -467,43 +507,59 @@ Focus on correctness and precise timing for audio-visual synchronization."""
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("claude-3-7-sonnet-latest", prompt)
+            cached_response = self.response_cache.get_cached_response("anthropic/claude-3.7-sonnet", prompt)
             if cached_response:
                 logger.info("Using cached Claude Manim code")
                 return cached_response
 
-        # Call the Anthropic Claude 3.7 model
-        response = await asyncio.to_thread(
-            self.anthropic_client.messages.create,
-            model="claude-3-7-sonnet-latest",
-            max_tokens=4000,
-            temperature=0.2,
-            system="You are an expert Manim programmer who creates high-quality, executable code for mathematical animations. Focus on writing clean, correct, and optimized code.",
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        # Extract the code from the response
-        content = response.content[0].text
-        
-        # Find Python code blocks
-        import re
-        code_blocks = re.findall(r'```python\n(.*?)```', content, re.DOTALL)
-        
-        if code_blocks:
-            manim_code = code_blocks[0]
-        else:
-            # If no code block is found, use the entire response (less ideal)
-            manim_code = content
+        # Call the AsyncOpenAI Claude 3.7 model
+        try:
+            response = await self.async_openai_client.chat.completions.create(
+                model="anthropic/claude-3.7-sonnet",
+                max_tokens=4096,
+                temperature=0.2,
+                messages=[
+                    {"role": "system", "content": "You are an expert Manim programmer who creates high-quality, executable code for mathematical animations. Focus on writing clean, correct, and optimized code."},
+                    {"role": "user", "content": prompt}
+                ],
+                extra_headers=self.openrouter_headers
+            )
             
-        logger.info("Manim code generation completed successfully")
-        
-        # Cache the response if enabled
-        if self.use_cache and self.response_cache:
-            self.response_cache.set_cached_response("claude-3-7-sonnet-latest", prompt, manim_code)
-        
-        return manim_code
+            # Extract the code from the response
+            content = response.choices[0].message.content
+            
+            # Find Python code blocks
+            import re
+            code_blocks = re.findall(r'```python\n(.*?)```', content, re.DOTALL)
+            
+            if code_blocks:
+                manim_code = code_blocks[0]
+            else:
+                # If no code block is found, use the entire response (less ideal)
+                manim_code = content
+                
+            logger.info("Manim code generation completed successfully")
+            
+            # Cache the response if enabled
+            if self.use_cache and self.response_cache:
+                self.response_cache.set_cached_response("anthropic/claude-3.7-sonnet", prompt, manim_code)
+            
+            # Extract code from markdown code block if needed
+            if "```python" in manim_code:
+                # Use a more robust regex that captures all content between triple backticks
+                code_match = re.search(r"```python\s*(.+?)```", manim_code, re.DOTALL)
+                if code_match:
+                    manim_code = code_match.group(1).strip()
+                else:
+                    # Fallback to splitting method if regex fails
+                    code_blocks = manim_code.split("```python")
+                    if len(code_blocks) > 1:
+                        manim_code = code_blocks[1].split("```")[0].strip()
+            
+            return manim_code
+        except Exception as e:
+            logger.error(f"Error generating Manim code: {e}")
+            return None
     
     async def generate_content_concurrently(self, query: Union[str, Dict[str, Any]], explanation: str, animation_plan: AnimationPlan) -> Tuple[Dict[str, str], str]:
         """
@@ -539,7 +595,657 @@ Focus on correctness and precise timing for audio-visual synchronization."""
             Dictionary of model usage metrics
         """
         return {
-            "tokens": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0},
-            "calls": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0},
-            "cache_hits": {"o3-mini": 0, "gpt-4o": 0, "claude-3-7-sonnet-latest": 0}
-        } 
+            "tokens": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0},
+            "calls": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0},
+            "cache_hits": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0}
+        }
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def create_scene_plan(self, query: Union[str, Dict[str, Any]], explanation: str) -> Dict[str, Any]:
+        """
+        Creates a structured scene plan for the video using o3-mini.
+        
+        Args:
+            query: Either a string containing the query or a dictionary containing the query and related information
+            explanation: Mathematical explanation or solution
+            
+        Returns:
+            JSON object with detailed scene breakdown
+        """
+        if not self.openai_client:
+            raise ValueError("OpenRouter API key not provided")
+        
+        # Handle both string and dictionary inputs
+        if isinstance(query, str):
+            query_text = query
+            category = "concept"
+        else:
+            query_text = query.get('query', '')
+            category = query.get('category', 'concept')
+            
+        logger.info(f"Creating scene plan for: {query_text}")
+        
+        # Construct the prompt
+        prompt = f"""You are an expert animation planner for educational mathematics videos.
+Your task is to create a detailed scene-by-scene plan for a Manim animation that explains the following mathematical problem or concept:
+
+QUERY: {query_text}
+
+MATHEMATICAL EXPLANATION:
+{explanation}
+
+Please provide a JSON output with the following structure:
+{{
+  "title": "Video title",
+  "scenes": [
+    {{
+      "id": "scene1",
+      "title": "Introduction to the Problem",
+      "duration_estimate": 30,
+      "goals": ["Introduce the problem", "Explain why it matters"],
+      "key_points": ["Point 1", "Point 2"],
+      "concepts_to_visualize": ["Concept 1", "Concept 2"],
+      "visualization_notes": "Ideas for how to visualize this scene"
+    }},
+    // More scenes...
+  ]
+}}
+
+Each scene should be a logical unit of explanation. Break down the problem into 3-7 scenes that build upon each other.
+Make sure each scene has a clear purpose and includes specific details about what should be visualized.
+
+The entire video should be comprehensive and educational, aimed at someone learning this mathematical concept.
+"""
+
+        # Check cache first if enabled
+        if self.use_cache and self.response_cache:
+            cached_response = self.response_cache.get_cached_response("openai/o3-mini", prompt)
+            if cached_response:
+                logger.info("Using cached o3-mini scene plan response")
+                return json.loads(cached_response)
+
+        # Call the OpenAI o3-mini model
+        response = self.openai_client.chat.completions.create(
+            model="openai/o3-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert animator who specializes in breaking down mathematical concepts into clear visual scenes."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"},
+            extra_headers=self.openrouter_headers
+        )
+        
+        scene_plan_json = response.choices[0].message.content
+        
+        # Update token usage
+        if hasattr(response, 'usage'):
+            self.model_usage["openai/o3-mini"]["prompt_tokens"] += response.usage.prompt_tokens
+            self.model_usage["openai/o3-mini"]["completion_tokens"] += response.usage.completion_tokens
+        
+        # Cache the response if enabled
+        if self.use_cache and self.response_cache:
+            self.response_cache.set_cached_response("openai/o3-mini", prompt, scene_plan_json)
+        
+        logger.info("Scene plan created successfully")
+        return json.loads(scene_plan_json)
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    async def generate_scene_script_and_animation(self, scene_data: Dict[str, Any], query: str, explanation: str) -> Dict[str, Any]:
+        """
+        Generates detailed script and animation plan for a single scene using Gemini via OpenRouter.
+        
+        Args:
+            scene_data: Data for the current scene
+            query: Original query
+            explanation: Mathematical explanation
+            
+        Returns:
+            Updated scene data with script and animation plan
+        """
+        if not self.openai_client:
+            raise ValueError("OpenRouter API key not provided")
+            
+        logger.info(f"Generating script and animation for scene: {scene_data.get('id', 'unknown')}")
+        
+        # Construct the prompt
+        prompt = f"""You are an expert scriptwriter and animator for educational mathematics videos.
+Create a detailed script and animation plan for the following scene in a math video:
+
+ORIGINAL QUERY: {query}
+
+SCENE INFORMATION:
+Title: {scene_data.get('title')}
+Goals: {', '.join(scene_data.get('goals', []))}
+Key Points: {', '.join(scene_data.get('key_points', []))}
+Concepts to Visualize: {', '.join(scene_data.get('concepts_to_visualize', []))}
+Visualization Notes: {scene_data.get('visualization_notes', '')}
+
+ORIGINAL MATHEMATICAL EXPLANATION (for context):
+{explanation}
+
+Please provide:
+1. A detailed narration script for this scene
+2. A detailed, step-by-step animation plan describing exactly what should be shown and how it should be animated
+
+Your response should be in JSON format with the following structure:
+{{
+  "narration": "Complete script for the voiceover",
+  "animation_plan": {{
+    "elements": [
+      {{
+        "type": "text/equation/shape/graph/etc",
+        "content": "Exact content to display",
+        "position": "center/left/etc",
+        "animation": "FadeIn/Write/etc",
+        "timing": "When this should appear relative to narration"
+      }},
+      // More elements...
+    ],
+    "transitions": [
+      {{
+        "from": "element description",
+        "to": "element description",
+        "animation": "Transform/FadeOut+FadeIn/etc",
+        "timing": "When this should happen"
+      }}
+    ]
+  }}
+}}
+
+Be as specific and detailed as possible so a programmer can implement this scene exactly as you envision it.
+"""
+
+        # Check cache first if enabled
+        cache_key = f"gemini_scene_{scene_data.get('id', 'unknown')}"
+        if self.use_cache and self.response_cache:
+            cached_response = self.response_cache.get_cached_response("google/gemini-flash-1.5", prompt, scene_id=cache_key)
+            if cached_response:
+                logger.info(f"Using cached Gemini response for scene {scene_data.get('id', 'unknown')}")
+                return json.loads(cached_response)
+
+        # Call Gemini model via OpenRouter
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="google/gemini-flash-1.5",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                extra_headers=self.openrouter_headers
+            )
+            result_text = response.choices[0].message.content
+            scene_details = json.loads(result_text)
+        except Exception as e:
+            logger.error(f"Error getting response from Gemini via OpenRouter: {e}")
+            # Create a more meaningful fallback structure with default content
+            scene_details = {
+                "narration": f"This scene covers {scene_data.get('title', 'this topic')}. " +
+                             f"It focuses on {', '.join(scene_data.get('key_points', ['key concepts']))}.",
+                "animation_plan": {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "content": scene_data.get('title', 'Scene Title'),
+                            "position": "center",
+                            "animation": "Write",
+                            "timing": "At the beginning"
+                        },
+                        {
+                            "type": "text",
+                            "content": "Key points: " + ", ".join(scene_data.get('key_points', ['None provided'])),
+                            "position": "center",
+                            "animation": "FadeIn",
+                            "timing": "After title"
+                        }
+                    ],
+                    "transitions": [
+                        {
+                            "from": "title",
+                            "to": "key points",
+                            "animation": "Transform",
+                            "timing": "Middle of scene"
+                        }
+                    ]
+                }
+            }
+        
+        # Cache the response if enabled
+        if self.use_cache and self.response_cache:
+            self.response_cache.set_cached_response("google/gemini-flash-1.5", prompt, json.dumps(scene_details), scene_id=cache_key)
+        
+        logger.info(f"Script and animation plan generated for scene {scene_data.get('id', 'unknown')}")
+        return scene_details
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=3, max=15))
+    async def generate_scene_code(self, scene_id: str, scene_title: str, narration: str, animation_plan: Dict[str, Any], output_dir: Optional[Path] = None) -> str:
+        """
+        Generate Manim code for a scene.
+        
+        Args:
+            scene_id: Unique identifier for the scene
+            scene_title: Title of the scene
+            narration: Narration script for the scene
+            animation_plan: Animation plan for the scene
+            output_dir: Optional directory where the scene files are stored
+            
+        Returns:
+            Manim code for the scene
+        """
+        # First check if the file already exists in the output directory
+        if output_dir is not None:
+            scene_file = output_dir / scene_id / f"{scene_id}.py"
+            if scene_file.exists():
+                logger.info(f"Found existing Python file for scene {scene_id}, loading it instead of calling LLM")
+                with open(scene_file, "r") as f:
+                    return f.read()
+        
+        # Check for OpenRouter API
+        if not self.openai_client:
+            raise ValueError("OpenRouter API key not provided")
+            
+        logger.info(f"Generating Manim code for scene {scene_id}")
+        
+        # Debug logging to verify the contents 
+        logger.debug(f"Narration summary for {scene_id}: {narration[:100]}...")
+        if animation_plan:
+            element_count = len(animation_plan.get('elements', []))
+            transition_count = len(animation_plan.get('transitions', []))
+            logger.debug(f"Animation plan for {scene_id}: {element_count} elements, {transition_count} transitions")
+        
+        # Construct the prompt
+        prompt = f"""You are an expert in creating educational math videos using Manim. I need you to generate Manim code for a scene in a math explainer video.
+
+IMPORTANT: You ONLY need to generate the Manim video content. The narration audio is ALREADY PROVIDED and will be synchronized with your animation during post-processing.
+
+Scene ID: {scene_id}
+Scene Title: {scene_title}
+
+NARRATION SCRIPT (already recorded as audio):
+```
+{narration}
+```
+
+ANIMATION PLAN:
+```json
+{json.dumps(animation_plan, indent=2)}
+```
+
+Your tasks are:
+1. Create a Manim Scene class that visualizes this scene's content
+2. Generate meaningful, detailed, and smooth animations that match the narration timing
+3. Add detailed captions and visual elements to reinforce the narration
+4. Include thoughtful transitions, proper timing, and clear visual hierarchy
+5. Ensure the animations and visual elements synchronize with the key points in the narration script
+
+Instructions:
+- DO NOT generate any voice-over or audio code - the audio is provided separately
+- Create a standard Manim Scene class (not a VoiceoverScene)
+- Assume the scene duration will match the audio duration exactly
+- ADD DETAILED CAPTIONS to enhance understanding
+- Produce visually appealing animations with appropriate pacing
+- Use appropriate animation timings that correspond to the expected narration flow
+- Generate meaningful visualizations that explain the concepts clearly and thoroughly
+- Structure your code to be modular and well-organized
+- If the scene requires mathematical equations, use LaTeX with proper formatting
+- Use color effectively to differentiate elements and highlight key concepts
+- Emphasize producing a rich, informative visual experience that stands on its own
+
+Please provide ONLY the Manim Python code for the scene class with detailed comments explaining the animation elements. The code should be ready to run using the Manim Community library.
+"""
+
+        # Check cache first if enabled
+        if self.use_cache and self.response_cache:
+            cached_response = self.response_cache.get_cached_response(
+                "anthropic/claude-3.7-sonnet", 
+                prompt, 
+                scene_id=scene_id
+            )
+            if cached_response:
+                logger.info("Using cached Claude response for Manim code")
+                return cached_response
+
+        # Call Claude to generate the Manim code
+        try:
+            print(f"Generating Manim code with prompt {prompt}")
+            response = await self.async_openai_client.chat.completions.create(
+                model="anthropic/claude-3.7-sonnet",
+                max_tokens=4096,
+                temperature=0.7,
+                messages=[
+                    {"role": "system", "content": "You are a Manim expert helping to create educational math videos. Generate clear, efficient, and attractive visualizations that match the provided narration. Focus on creating meaningful animations that explain concepts visually without requiring audio explanations."},
+                    {"role": "user", "content": prompt}
+                ],
+                extra_headers=self.openrouter_headers
+            )
+            
+            manim_code = response.choices[0].message.content
+            
+            # Extract just the Python code from the response (if it's wrapped in a code block)
+            if "```python" in manim_code and "```" in manim_code:
+                manim_code = manim_code.split("```python")[1].split("```")[0].strip()
+            elif "```" in manim_code:
+                manim_code = manim_code.split("```")[1].split("```")[0].strip()
+            
+            logger.info(f"Generated Manim code for scene {scene_id}")
+            
+            # Cache the response if enabled
+            if self.use_cache and self.response_cache:
+                self.response_cache.set_cached_response(
+                    "anthropic/claude-3.7-sonnet", 
+                    prompt, 
+                    manim_code,
+                    scene_id=scene_id
+                )
+            
+            return manim_code
+            
+        except Exception as e:
+            logger.error(f"Error generating Manim code for scene {scene_id}: {e}")
+            return None
+        
+    async def process_scene(self, scene_data: Dict[str, Any], query: str, explanation: str, output_dir: Path) -> Scene:
+        """
+        Process a scene by generating narration, animation plan, and Manim code.
+        
+        Args:
+            scene_data: Scene data from the scene plan
+            query: Original query provided by the user
+            explanation: Explanation or solution generated by the AI
+            output_dir: Directory to save the scene files
+            
+        Returns:
+            Scene object with all the generated data
+        """
+        scene_id = scene_data.get("id", "unknown")
+        scene_title = scene_data.get("title", "Untitled Scene")
+        logger.info(f"Processing scene {scene_id}: {scene_title}")
+        
+        # Create scene directory if it doesn't exist
+        scene_dir = output_dir / scene_id
+        scene_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Check if files already exist
+        scene_file = scene_dir / f"{scene_id}.py"
+        narration_file = scene_dir / f"{scene_id}_narration.txt"
+        animation_plan_file = scene_dir / f"{scene_id}_animation_plan.json"
+        
+        # If all necessary files exist, load them instead of generating new ones
+        if scene_file.exists() and narration_file.exists() and animation_plan_file.exists():
+            logger.info(f"Found existing files for scene {scene_id}, loading them instead of generating new content")
+            
+            with open(scene_file, "r") as f:
+                scene_code = f.read()
+                
+            with open(narration_file, "r") as f:
+                narration = f.read()
+                
+            with open(animation_plan_file, "r") as f:
+                animation_plan = json.load(f)
+                
+            # Create a scene object with existing files
+            scene = Scene(
+                id=scene_id,
+                title=scene_title,
+                duration=animation_plan.get("duration", 0),
+                narration=narration,
+                animation_plan=animation_plan,
+                original_query=query,
+                original_solution=explanation,
+                manim_code=scene_code,
+                audio_file=None,
+                video_file=None
+            )
+            
+            logger.info(f"Scene {scene_id} loaded from existing files")
+            return scene
+        
+        # Step 1: Generate script and animation plan for the scene
+        try:
+            scene_content = await self.generate_scene_script_and_animation(
+                scene_data=scene_data,
+                query=query,
+                explanation=explanation
+            )
+            
+            if not scene_content:
+                logger.error(f"Failed to generate content for scene {scene_id}")
+                return None
+                
+            narration = scene_content.get("narration", "")
+            animation_plan = scene_content.get("animation_plan", {})
+            
+            # Save the narration to a file
+            scene_dir = output_dir / scene_id
+            scene_dir.mkdir(exist_ok=True, parents=True)
+            
+            with open(scene_dir / f"{scene_id}_narration.txt", "w") as f:
+                f.write(narration)
+                
+            with open(scene_dir / f"{scene_id}_animation_plan.json", "w") as f:
+                json.dump(animation_plan, f, indent=2)
+                
+            # Create a scene object without Manim code or audio file for now
+            scene = Scene(
+                id=scene_id,
+                title=scene_title,
+                duration=animation_plan.get("duration", 0),
+                narration=narration,
+                animation_plan=animation_plan,
+                original_query=query,
+                original_solution=explanation,
+                manim_code=None,
+                audio_file=None,
+                video_file=None
+            )
+            
+            # Step 2: Generate Manim code for the scene
+            scene_code = await self.generate_scene_code(
+                scene_id=scene_id,
+                scene_title=scene_title,
+                narration=narration,
+                animation_plan=animation_plan
+            )
+            
+            if not scene_code:
+                logger.error(f"Failed to generate Manim code for scene {scene_id}")
+                return scene
+                
+            # Save the Manim code to a file
+            with open(scene_dir / f"{scene_id}.py", "w") as f:
+                f.write(scene_code)
+                
+            # Update the scene with the Manim code
+            scene.manim_code = scene_code
+            
+            logger.info(f"Scene {scene_id} processed successfully")
+            return scene
+            
+        except Exception as e:
+            logger.error(f"Error processing scene {scene_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=5, max=60))
+    async def fix_manim_code(
+        self, 
+        scene_id: str, 
+        scene_title: str, 
+        original_code: str, 
+        error_output: str,
+        narration: str = None,
+        animation_plan: Dict[str, Any] = None,
+        output_dir: Optional[Path] = None
+    ) -> str:
+        """
+        Fix Manim code that has failed to compile or run.
+        
+        Args:
+            scene_id: Unique identifier for the scene
+            scene_title: Title of the scene
+            original_code: Original Manim code that failed
+            error_output: Error message or output from the failed run
+            narration: Optional narration script to provide context
+            animation_plan: Optional animation plan to provide additional context
+            output_dir: Optional directory where the scene files are stored
+            
+        Returns:
+            Fixed Manim code for the scene
+        """
+        # Check if there's a fixed version available
+        if output_dir is not None:
+            fixed_file = output_dir / scene_id / f"{scene_id}_fixed.py"
+            if fixed_file.exists():
+                logger.info(f"Found existing fixed Python file for scene {scene_id}, using it instead of calling LLM")
+                with open(fixed_file, "r") as f:
+                    return f.read()
+        
+        # Check for OpenRouter API
+        if not self.openai_client:
+            raise ValueError("OpenRouter API key not provided")
+            
+        logger.info(f"Fixing Manim code for scene {scene_id}")
+        
+        # Debug logging to verify the contents
+        if narration:
+            logger.debug(f"Narration summary for {scene_id}: {narration[:100]}...")
+        else:
+            logger.debug(f"No narration provided for scene {scene_id}")
+            
+        if animation_plan:
+            element_count = len(animation_plan.get('elements', []))
+            transition_count = len(animation_plan.get('transitions', []))
+            logger.debug(f"Animation plan for {scene_id}: {element_count} elements, {transition_count} transitions")
+        else:
+            logger.debug(f"No animation plan provided for scene {scene_id}")
+        
+        # Validate context - if both narration and animation plan are empty/invalid, log a warning
+        if (not narration or narration == "Error generating narration. Please try again.") and \
+           (not animation_plan or not animation_plan.get('elements')):
+            logger.warning(f"Insufficient context for scene {scene_id} fix. Attempting to load context from files.")
+            
+            # Try to load context from files if output_dir is provided
+            if output_dir is not None:
+                narration_file = output_dir / scene_id / f"{scene_id}_narration.txt"
+                animation_plan_file = output_dir / scene_id / f"{scene_id}_animation_plan.json"
+                
+                if narration_file.exists():
+                    with open(narration_file, "r") as f:
+                        narration = f.read()
+                        logger.info(f"Loaded narration from file for scene {scene_id}")
+                
+                if animation_plan_file.exists():
+                    with open(animation_plan_file, "r") as f:
+                        animation_plan = json.load(f)
+                        logger.info(f"Loaded animation plan from file for scene {scene_id}")
+            
+        # Build the prompt with additional context if provided
+        context_info = ""
+        if narration:
+            context_info += f"""
+NARRATION SCRIPT (for context):
+```
+{narration}
+```
+
+"""
+        
+        if animation_plan:
+            context_info += f"""
+ANIMATION PLAN (for context):
+```json
+{json.dumps(animation_plan, indent=2)}
+```
+
+"""
+        
+        # Construct the prompt
+        prompt = f"""You are an expert in creating educational math videos using Manim. I need you to fix Manim code that failed to compile or run.
+
+Scene ID: {scene_id}
+Scene Title: {scene_title}
+
+{context_info}The original Manim code:
+```python
+{original_code}
+```
+The error or output from running the code:
+```
+{error_output}
+```
+
+Please analyze the error and fix the code. Common issues include:
+1. Undefined variables or attributes
+2. Incorrect syntax or indentation
+3. Misuse of Manim classes or methods
+4. Animation timing issues
+5. Missing imports
+
+Please provide ONLY the fixed Manim Python code for the scene class with detailed comments explaining your changes. The code should be ready to run using the Manim Community library.
+
+Important:
+- Return the complete fixed code, not just the fixed sections
+- Keep all functionality from the original code, just fix the errors
+- DO NOT add any explanatory text outside the code itself
+- Focus on fixing compilation/runtime errors, not optimizing the code
+"""
+
+        # Check cache first if enabled
+        if self.use_cache and self.response_cache:
+            cached_response = self.response_cache.get_cached_response(
+                "anthropic/claude-3.7-sonnet", 
+                prompt, 
+                scene_id=f"{scene_id}_fix"
+            )
+            if cached_response:
+                logger.info("Using cached Claude response for fixed Manim code")
+                return cached_response
+
+        # Call Claude with manual retry logic for 529 errors
+        max_retries = 5
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                print(f"Generating fixed Manim code with prompt {prompt}")
+                response = await self.async_openai_client.chat.completions.create(
+                    model="anthropic/claude-3.7-sonnet",
+                    max_tokens=4096,
+                    temperature=0.7,
+                    messages=[
+                        {"role": "system", "content": "You are a Manim expert helping to fix code for educational math videos. Fix any errors in the code while maintaining its original intent and functionality."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    extra_headers=self.openrouter_headers
+                )
+                
+                fixed_code = response.choices[0].message.content
+                
+                # Extract just the Python code from the response (if it's wrapped in a code block)
+                if "```python" in fixed_code and "```" in fixed_code:
+                    fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
+                elif "```" in fixed_code:
+                    fixed_code = fixed_code.split("```")[1].split("```")[0].strip()
+                
+                logger.info(f"Fixed Manim code for scene {scene_id}")
+                
+                # Cache the response if enabled
+                if self.use_cache and self.response_cache:
+                    self.response_cache.set_cached_response(
+                        "anthropic/claude-3.7-sonnet", 
+                        prompt, 
+                        fixed_code,
+                        scene_id=f"{scene_id}_fix"
+                    )
+                
+                return fixed_code
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Error fixing Manim code for scene {scene_id} after {max_retries} attempts: {e}")
+                    return None
+                    
+                # Calculate backoff with jitter (exponential backoff with randomness)
+                backoff_seconds = min(60, 2 ** retry_count + random.uniform(0, 1))
+                logger.warning(f"API error when fixing code for scene {scene_id}: {e}. Retrying in {backoff_seconds:.2f} seconds (attempt {retry_count}/{max_retries})")
+                await asyncio.sleep(backoff_seconds)

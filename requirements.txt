@@ -23,6 +23,8 @@ pytest-asyncio
 concurrent-log-handler
 tenacity
 tqdm
+google-generativeai
+moviepy==1.0.3
 
 
 
