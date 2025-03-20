@@ -238,7 +238,7 @@ Your response should be comprehensive, mathematically rigorous, and educational.
         response = self.openai_client.chat.completions.create(
             model="openai/o3-mini",
             messages=[
-                {"role": "system", "content": "You are a brilliant mathematician who explains concepts clearly and solves problems with precision."},
+                {"role": "system", "content": "You are a brilliant teacher who explains concepts clearly and solves problems with precision."},
                 {"role": "user", "content": prompt}
             ],
             extra_headers=self.openrouter_headers
@@ -279,12 +279,12 @@ Your response should be comprehensive, mathematically rigorous, and educational.
         logger.info(f"Creating animation plan for: {query_text}")
         
         # Construct the prompt
-        prompt = f"""You are an expert animation planner for mathematical videos. 
+        prompt = f"""You are an expert animation planner for educational videos. 
 Your task is to create a detailed, structured plan for a Manim animation that explains the following:
 
 QUERY: {query_text}
 
-MATHEMATICAL EXPLANATION:
+PROFESSIONAL EXPLANATION:
 {explanation}
 
 Create a JSON plan for the animation with the following structure:
@@ -336,7 +336,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
         response = self.openai_client.chat.completions.create(
             model="openai/gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an expert animation planner for mathematical educational videos."},
+                {"role": "system", "content": "You are an expert animation planner for educational videos."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -386,7 +386,7 @@ Your response should ONLY contain the valid JSON plan, no additional explanation
         
         # Construct the prompt
         prompt = f"""You are an expert educational scriptwriter. 
-Create a natural, engaging narration script for a mathematical video explaining:
+Create a natural, engaging narration script for an educational video explaining:
 
 QUERY: {query_text}
 
@@ -394,7 +394,7 @@ The script should align with this animation plan:
 {json.dumps(animation_plan.dict(), indent=2)}
 
 For each section, write precise narration text that:
-1. Clearly explains the mathematical concepts
+1. Clearly explains the concepts
 2. Aligns perfectly with the visual elements described in the plan
 3. Uses appropriate transitions between sections
 4. Has natural, conversational language that's easy to follow
@@ -422,7 +422,7 @@ Your narration should be timed to match the specified durations in the animation
         response = self.openai_client.chat.completions.create(
             model="openai/gpt-4o",
             messages=[
-                {"role": "system", "content": "You are an expert educational scriptwriter for mathematical videos."},
+                {"role": "system", "content": "You are an expert educational scriptwriter for educational videos."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -469,7 +469,7 @@ Your narration should be timed to match the specified durations in the animation
                 query_text = query.get('query', '')
         
         # Construct the prompt
-        prompt = f"""You are an expert Manim programmer creating educational mathematics videos.
+        prompt = f"""You are an expert Manim programmer creating educational videos.
 
 Generate complete, executable Manim code for a video that explains:
 QUERY: {query_text}
@@ -519,7 +519,7 @@ Focus on correctness and precise timing for audio-visual synchronization."""
                 max_tokens=4096,
                 temperature=0.2,
                 messages=[
-                    {"role": "system", "content": "You are an expert Manim programmer who creates high-quality, executable code for mathematical animations. Focus on writing clean, correct, and optimized code."},
+                    {"role": "system", "content": "You are an expert Manim programmer who creates high-quality, executable code for educational animations. Focus on writing clean, correct, and optimized code."},
                     {"role": "user", "content": prompt}
                 ],
                 extra_headers=self.openrouter_headers
@@ -626,12 +626,12 @@ Focus on correctness and precise timing for audio-visual synchronization."""
         logger.info(f"Creating scene plan for: {query_text}")
         
         # Construct the prompt
-        prompt = f"""You are an expert animation planner for educational mathematics videos.
-Your task is to create a detailed scene-by-scene plan for a Manim animation that explains the following mathematical problem or concept:
+        prompt = f"""You are an expert animation planner for educational videos.
+Your task is to create a detailed scene-by-scene plan for a Manim animation that explains the following problem or concept:
 
 QUERY: {query_text}
 
-MATHEMATICAL EXPLANATION:
+PROFESSIONAL EXPLANATION:
 {explanation}
 
 Please provide a JSON output with the following structure:
@@ -654,7 +654,7 @@ Please provide a JSON output with the following structure:
 Each scene should be a logical unit of explanation. Break down the problem into 3-7 scenes that build upon each other.
 Make sure each scene has a clear purpose and includes specific details about what should be visualized.
 
-The entire video should be comprehensive and educational, aimed at someone learning this mathematical concept.
+The entire video should be comprehensive and educational, aimed at someone learning this concept.
 """
 
         # Check cache first if enabled
@@ -668,7 +668,7 @@ The entire video should be comprehensive and educational, aimed at someone learn
         response = self.openai_client.chat.completions.create(
             model="openai/o3-mini",
             messages=[
-                {"role": "system", "content": "You are an expert animator who specializes in breaking down mathematical concepts into clear visual scenes."},
+                {"role": "system", "content": "You are an expert animator who specializes in breaking down concepts into clear visual scenes."},
                 {"role": "user", "content": prompt}
             ],
             response_format={"type": "json_object"},
@@ -708,8 +708,8 @@ The entire video should be comprehensive and educational, aimed at someone learn
         logger.info(f"Generating script and animation for scene: {scene_data.get('id', 'unknown')}")
         
         # Construct the prompt
-        prompt = f"""You are an expert scriptwriter and animator for educational mathematics videos.
-Create a detailed script and animation plan for the following scene in a math video:
+        prompt = f"""You are an expert scriptwriter and animator for educational videos.
+Create a detailed script and animation plan for the following scene in an educational video:
 
 ORIGINAL QUERY: {query}
 
@@ -720,7 +720,7 @@ Key Points: {', '.join(scene_data.get('key_points', []))}
 Concepts to Visualize: {', '.join(scene_data.get('concepts_to_visualize', []))}
 Visualization Notes: {scene_data.get('visualization_notes', '')}
 
-ORIGINAL MATHEMATICAL EXPLANATION (for context):
+ORIGINAL PROFESSIONAL EXPLANATION (for context):
 {explanation}
 
 Please provide:
@@ -853,7 +853,7 @@ Be as specific and detailed as possible so a programmer can implement this scene
             logger.debug(f"Animation plan for {scene_id}: {element_count} elements, {transition_count} transitions")
         
         # Construct the prompt
-        prompt = f"""You are an expert in creating educational math videos using Manim. I need you to generate Manim code for a scene in a math explainer video.
+        prompt = f"""You are an expert in creating educational videos using Manim. I need you to generate Manim code for a scene in an explainer video.
 
 IMPORTANT: You ONLY need to generate the Manim video content. The narration audio is ALREADY PROVIDED and will be synchronized with your animation during post-processing.
 
@@ -871,26 +871,23 @@ ANIMATION PLAN:
 ```
 
 Your tasks are:
-1. Create a Manim Scene class that visualizes this scene's content
-2. Generate meaningful, detailed, and smooth animations that match the narration timing
-3. Add detailed captions and visual elements to reinforce the narration
-4. Include thoughtful transitions, proper timing, and clear visual hierarchy
-5. Ensure the animations and visual elements synchronize with the key points in the narration script
+1. Create a standard Manim Scene class (not a VoiceoverScene) that clearly visualizes this scene's content.
+2. Generate meaningful, detailed, and smooth animations precisely aligned with key points of the narration script to avoid inconsistencies.
+3. Add detailed CLOSED CAPTIONS explicitly corresponding to segments of the provided narration script. Captions must be clearly visible, properly timed, and never overlap with other text or animations.
+4. Avoid text overlaps, animation overlaps, off-screen animations, or any elements cut off by scene dimensions. Ensure all elements fit neatly within the frame.
+5. Include thoughtful transitions between visual elements, carefully timed to enhance viewer comprehension.
+6. Ensure animation timing closely matches narration timing, using appropriate pacing and duration for each element.
+7. Generate meaningful and beautiful visualizations with clear visual hierarchy, effective use of colors, and visual contrasts to highlight key concepts.
+8. Structure the code to be modular, well-organized, and clearly commented for ease of understanding.
+9. If mathematical equations are required, use LaTeX formatting and clearly position them within the frame for readability and visual balance.
 
 Instructions:
-- DO NOT generate any voice-over or audio code - the audio is provided separately
-- Create a standard Manim Scene class (not a VoiceoverScene)
-- Assume the scene duration will match the audio duration exactly
-- ADD DETAILED CAPTIONS to enhance understanding
-- Produce visually appealing animations with appropriate pacing
-- Use appropriate animation timings that correspond to the expected narration flow
-- Generate meaningful visualizations that explain the concepts clearly and thoroughly
-- Structure your code to be modular and well-organized
-- If the scene requires mathematical equations, use LaTeX with proper formatting
-- Use color effectively to differentiate elements and highlight key concepts
-- Emphasize producing a rich, informative visual experience that stands on its own
+- DO NOT generate any voice-over or audio code—the audio is provided separately.
+- The animation should clearly stand alone visually and reinforce the script effectively.
+- Provide detailed captions that directly match the provided script segments, enhancing viewer comprehension without redundancy.
+- Emphasize clarity, precision, and aesthetics to create an informative and visually appealing educational experience.
 
-Please provide ONLY the Manim Python code for the scene class with detailed comments explaining the animation elements. The code should be ready to run using the Manim Community library.
+Please provide ONLY the Manim Python code for the scene class, including detailed comments explaining the animation elements. The code should be ready to run using the Manim Community library.
 """
 
         # Check cache first if enabled
@@ -912,7 +909,7 @@ Please provide ONLY the Manim Python code for the scene class with detailed comm
                 max_tokens=4096,
                 temperature=0.7,
                 messages=[
-                    {"role": "system", "content": "You are a Manim expert helping to create educational math videos. Generate clear, efficient, and attractive visualizations that match the provided narration. Focus on creating meaningful animations that explain concepts visually without requiring audio explanations."},
+                    {"role": "system", "content": "You are a Manim expert helping to create educational videos. Generate clear, efficient, and attractive visualizations that match the provided narration. Focus on creating meaningful animations that explain concepts visually without requiring audio explanations."},
                     {"role": "user", "content": prompt}
                 ],
                 extra_headers=self.openrouter_headers
@@ -1160,7 +1157,7 @@ ANIMATION PLAN (for context):
 """
         
         # Construct the prompt
-        prompt = f"""You are an expert in creating educational math videos using Manim. I need you to fix Manim code that failed to compile or run.
+        prompt = f"""You are an expert in creating educational videos using Manim. I need you to fix Manim code that failed to compile or run.
 
 Scene ID: {scene_id}
 Scene Title: {scene_title}
@@ -1212,7 +1209,7 @@ Important:
                     max_tokens=4096,
                     temperature=0.7,
                     messages=[
-                        {"role": "system", "content": "You are a Manim expert helping to fix code for educational math videos. Fix any errors in the code while maintaining its original intent and functionality."},
+                        {"role": "system", "content": "You are a Manim expert helping to fix code for educational videos. Fix any errors in the code while maintaining its original intent and functionality."},
                         {"role": "user", "content": prompt}
                     ],
                     extra_headers=self.openrouter_headers

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 from src.config.config import Config
 from src.core.ai_manager import AIManager
@@ -15,6 +16,7 @@ from src.core.animation_planner import AnimationPlan, Scene
 from src.utils.kokoro_voiceover import generate_audio_for_scenes
 from src.utils.video_utils import process_scene_videos, create_final_video
 from src.utils.logging_utils import get_logger
+from src.utils.background_timer import BackgroundTimer
 
 logger = get_logger(__name__)
 
@@ -29,6 +31,7 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
         config: Configuration object
         use_cache: Whether to use caching for AI responses
     """
+    step_timer = BackgroundTimer(prefix="Current step time: ")
     # Create output directory
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True, parents=True)
@@ -38,19 +41,24 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
     
     # Step 1: Solve the math problem with o3-mini
     logger.info("Solving the math problem...")
+    step_timer.start()
     solution = await ai_manager.solve_or_explain(problem)
+    step_timer.stop()
     
     with open(output_path / "solution.txt", "w") as f:
         f.write(solution)
     
     # Step 2: Create scene-based animation plan with o3-mini
     logger.info("Creating scene-based animation plan...")
+    step_timer.start()
     scene_plan = await ai_manager.create_scene_plan(problem, solution)
-    
+    step_timer.stop()
     with open(output_path / "scene_plan.json", "w") as f:
         json.dump(scene_plan, f, indent=2)
     
     # Step 3: Process each scene using Gemini and Claude
+    logger.info("Processing scenes...")
+    step_timer.start()
     scenes = []
     for scene_data in scene_plan.get("scenes", []):
         logger.info(f"Processing scene: {scene_data.get('id', 'unknown')}")
@@ -63,6 +71,7 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
         )
         
         scenes.append(scene)
+    step_timer.stop()
     
     # Save the list of scenes
     scenes_data = [scene.model_dump() for scene in scenes]
@@ -71,23 +80,28 @@ async def generate_video(problem: str, output_dir: str, config: Config, use_cach
     
     # Step 4 & 5: Generate audio and video for each scene in parallel
     logger.info("Generating audio and video code concurrently for all scenes...")
+    step_timer.start()
     
     # Use the async version for batch processing of all scenes
     scenes_with_audio = await generate_audio_for_scenes(scenes, output_path)
+    step_timer.stop()
     
     # Step 6: Process videos with the audio
     logger.info("Processing videos for all scenes...")
+    step_timer.start()
     final_scenes = await process_scene_videos(
         scenes_with_audio, 
         output_path, 
         ai_manager=ai_manager,
         max_retries=None  # No limit on retries
     )
-    
+    step_timer.stop()
     # Step 7: Stitch all scene videos together
     logger.info("Creating final video...")
+    step_timer.start()
     final_video_path = str(output_path / "final_video.mp4")
     final_video = create_final_video(final_scenes, final_video_path)
+    step_timer.stop()
     
     if final_video:
         logger.info(f"Video generation complete. Final video saved to {final_video}")
@@ -125,8 +139,17 @@ def main():
         logger.error("Gemini API key not found. Please set the GEMINI_API_KEY environment variable.")
         sys.exit(1)
     
-    # Run the video generation process
-    asyncio.run(generate_video(args.problem, args.output, config, use_cache=not args.no_cache))
+    timer = BackgroundTimer(prefix="Total runtime: ")
+    timer.start()
+
+    try:
+        # Run the video generation process
+        asyncio.run(generate_video(args.problem, args.output, config, use_cache=not args.no_cache))
+    finally:
+        timer.stop()
+        end_time = time.time()
+        duration = end_time - timer.start_time
+        logger.info(f"Total execution time: {duration:.2f} seconds")
 
 
 if __name__ == "__main__":
