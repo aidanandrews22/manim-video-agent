@@ -28,6 +28,7 @@ import google.generativeai as genai
 from src.config.config import Config
 from src.utils.logging_utils import get_logger
 from src.core.animation_planner import AnimationPlan, AnimationPlanner, Scene
+from src.utils.prompt_gen import generate_code_prompt
 
 logger = get_logger(__name__)
 
@@ -184,9 +185,45 @@ class AIManager:
         # Model usage tracking
         self.model_usage = {
             "openai/o3-mini": {"prompt_tokens": 0, "completion_tokens": 0},
-            "anthropic/claude-3.7-sonnet": {"prompt_tokens": 0, "completion_tokens": 0},
+            "anthropic/claude-3.7-sonnet:thinking": {"prompt_tokens": 0, "completion_tokens": 0},
             "google/gemini-flash-1.5": {"prompt_tokens": 0, "completion_tokens": 0}
         }
+    
+    def _preprocess_llm_code_output(self, content: str) -> str:
+        """
+        Preprocesses the raw LLM output to extract clean code.
+        
+        Args:
+            content: Raw content from LLM that may contain code and explanatory text
+            
+        Returns:
+            Cleaned code ready for writing to a file
+        """
+        # Check for code blocks with markdown style
+        code_blocks = re.findall(r'```python\n(.*?)```', content, re.DOTALL)
+        if code_blocks:
+            return code_blocks[0].strip()
+            
+        # Check for code blocks with <CODE> style tags
+        code_blocks_alt = re.findall(r'<CODE>\n?(.*?)\n?</CODE>', content, re.DOTALL)
+        if code_blocks_alt:
+            return code_blocks_alt[0].strip()
+            
+        # Check for lines that look like the start of an explanation after code
+        # Common patterns might be "This animation introduces..." or numbered lists like "1. Split-screen..."
+        if "\n\n" in content:
+            content_parts = content.split("\n\n")
+            # Look for parts that appear to be explanations rather than code
+            for i, part in enumerate(content_parts):
+                if (part.startswith("This ") or
+                    part.startswith("The ") or
+                    re.match(r'^\d+\.', part.strip())):
+                    # Return everything before this explanatory text
+                    return "\n\n".join(content_parts[:i]).strip()
+        
+        # If we can't clearly separate, return everything but log a warning
+        logger.warning("Could not clearly identify code boundaries in LLM output. Using entire content.")
+        return content.strip()
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def solve_or_explain(self, query: Union[str, Dict[str, Any]]) -> str:
@@ -507,7 +544,7 @@ Focus on correctness and precise timing for audio-visual synchronization."""
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
-            cached_response = self.response_cache.get_cached_response("anthropic/claude-3.7-sonnet", prompt)
+            cached_response = self.response_cache.get_cached_response("anthropic/claude-3.7-sonnet:thinking", prompt)
             if cached_response:
                 logger.info("Using cached Claude Manim code")
                 return cached_response
@@ -515,8 +552,8 @@ Focus on correctness and precise timing for audio-visual synchronization."""
         # Call the AsyncOpenAI Claude 3.7 model
         try:
             response = await self.async_openai_client.chat.completions.create(
-                model="anthropic/claude-3.7-sonnet",
-                max_tokens=4096,
+                model="anthropic/claude-3.7-sonnet:thinking",
+                max_tokens=100000,
                 temperature=0.2,
                 messages=[
                     {"role": "system", "content": "You are an expert Manim programmer who creates high-quality, executable code for educational animations. Focus on writing clean, correct, and optimized code."},
@@ -527,34 +564,13 @@ Focus on correctness and precise timing for audio-visual synchronization."""
             
             # Extract the code from the response
             content = response.choices[0].message.content
+            manim_code = self._preprocess_llm_code_output(content)
             
-            # Find Python code blocks
-            import re
-            code_blocks = re.findall(r'```python\n(.*?)```', content, re.DOTALL)
-            
-            if code_blocks:
-                manim_code = code_blocks[0]
-            else:
-                # If no code block is found, use the entire response (less ideal)
-                manim_code = content
-                
             logger.info("Manim code generation completed successfully")
             
             # Cache the response if enabled
             if self.use_cache and self.response_cache:
-                self.response_cache.set_cached_response("anthropic/claude-3.7-sonnet", prompt, manim_code)
-            
-            # Extract code from markdown code block if needed
-            if "```python" in manim_code:
-                # Use a more robust regex that captures all content between triple backticks
-                code_match = re.search(r"```python\s*(.+?)```", manim_code, re.DOTALL)
-                if code_match:
-                    manim_code = code_match.group(1).strip()
-                else:
-                    # Fallback to splitting method if regex fails
-                    code_blocks = manim_code.split("```python")
-                    if len(code_blocks) > 1:
-                        manim_code = code_blocks[1].split("```")[0].strip()
+                self.response_cache.set_cached_response("anthropic/claude-3.7-sonnet:thinking", prompt, manim_code)
             
             return manim_code
         except Exception as e:
@@ -595,9 +611,9 @@ Focus on correctness and precise timing for audio-visual synchronization."""
             Dictionary of model usage metrics
         """
         return {
-            "tokens": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0},
-            "calls": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0},
-            "cache_hits": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet": 0}
+            "tokens": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet:thinking": 0},
+            "calls": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet:thinking": 0},
+            "cache_hits": {"openai/o3-mini": 0, "openai/gpt-4o": 0, "anthropic/claude-3.7-sonnet:thinking": 0}
         }
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -852,48 +868,18 @@ Be as specific and detailed as possible so a programmer can implement this scene
             transition_count = len(animation_plan.get('transitions', []))
             logger.debug(f"Animation plan for {scene_id}: {element_count} elements, {transition_count} transitions")
         
-        # Construct the prompt
-        prompt = f"""You are an expert in creating educational videos using Manim. I need you to generate Manim code for a scene in an explainer video.
-
-IMPORTANT: You ONLY need to generate the Manim video content. The narration audio is ALREADY PROVIDED and will be synchronized with your animation during post-processing.
-
-Scene ID: {scene_id}
-Scene Title: {scene_title}
-
-NARRATION SCRIPT (already recorded as audio):
-```
-{narration}
-```
-
-ANIMATION PLAN:
-```json
-{json.dumps(animation_plan, indent=2)}
-```
-
-Your tasks are:
-1. Create a standard Manim Scene class (not a VoiceoverScene) that clearly visualizes this scene's content.
-2. Generate meaningful, detailed, and smooth animations precisely aligned with key points of the narration script to avoid inconsistencies.
-3. Add detailed CLOSED CAPTIONS explicitly corresponding to segments of the provided narration script. Captions must be clearly visible, properly timed, and never overlap with other text or animations.
-4. Avoid text overlaps, animation overlaps, off-screen animations, or any elements cut off by scene dimensions. Ensure all elements fit neatly within the frame.
-5. Include thoughtful transitions between visual elements, carefully timed to enhance viewer comprehension.
-6. Ensure animation timing closely matches narration timing, using appropriate pacing and duration for each element.
-7. Generate meaningful and beautiful visualizations with clear visual hierarchy, effective use of colors, and visual contrasts to highlight key concepts.
-8. Structure the code to be modular, well-organized, and clearly commented for ease of understanding.
-9. If mathematical equations are required, use LaTeX formatting and clearly position them within the frame for readability and visual balance.
-
-Instructions:
-- DO NOT generate any voice-over or audio code—the audio is provided separately.
-- The animation should clearly stand alone visually and reinforce the script effectively.
-- Provide detailed captions that directly match the provided script segments, enhancing viewer comprehension without redundancy.
-- Emphasize clarity, precision, and aesthetics to create an informative and visually appealing educational experience.
-
-Please provide ONLY the Manim Python code for the scene class, including detailed comments explaining the animation elements. The code should be ready to run using the Manim Community library.
-"""
+        # Use the generate_code_prompt function to create the prompt
+        prompt = generate_code_prompt(
+            scene_id=scene_id,
+            scene_title=scene_title,
+            narration=narration,
+            animation_plan=animation_plan
+        )
 
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
             cached_response = self.response_cache.get_cached_response(
-                "anthropic/claude-3.7-sonnet", 
+                "anthropic/claude-3.7-sonnet:thinking", 
                 prompt, 
                 scene_id=scene_id
             )
@@ -903,10 +889,10 @@ Please provide ONLY the Manim Python code for the scene class, including detaile
 
         # Call Claude to generate the Manim code
         try:
-            print(f"Generating Manim code with prompt {prompt}")
+            print(f"Generating Manim code for scene {scene_id}")
             response = await self.async_openai_client.chat.completions.create(
-                model="anthropic/claude-3.7-sonnet",
-                max_tokens=4096,
+                model="anthropic/claude-3.7-sonnet:thinking",
+                max_tokens=100000,
                 temperature=0.7,
                 messages=[
                     {"role": "system", "content": "You are a Manim expert helping to create educational videos. Generate clear, efficient, and attractive visualizations that match the provided narration. Focus on creating meaningful animations that explain concepts visually without requiring audio explanations."},
@@ -917,18 +903,15 @@ Please provide ONLY the Manim Python code for the scene class, including detaile
             
             manim_code = response.choices[0].message.content
             
-            # Extract just the Python code from the response (if it's wrapped in a code block)
-            if "```python" in manim_code and "```" in manim_code:
-                manim_code = manim_code.split("```python")[1].split("```")[0].strip()
-            elif "```" in manim_code:
-                manim_code = manim_code.split("```")[1].split("```")[0].strip()
+            # Clean and preprocess the code
+            manim_code = self._preprocess_llm_code_output(manim_code)
             
             logger.info(f"Generated Manim code for scene {scene_id}")
             
             # Cache the response if enabled
             if self.use_cache and self.response_cache:
                 self.response_cache.set_cached_response(
-                    "anthropic/claude-3.7-sonnet", 
+                    "anthropic/claude-3.7-sonnet:thinking", 
                     prompt, 
                     manim_code,
                     scene_id=scene_id
@@ -1190,7 +1173,7 @@ Important:
         # Check cache first if enabled
         if self.use_cache and self.response_cache:
             cached_response = self.response_cache.get_cached_response(
-                "anthropic/claude-3.7-sonnet", 
+                "anthropic/claude-3.7-sonnet:thinking", 
                 prompt, 
                 scene_id=f"{scene_id}_fix"
             )
@@ -1205,8 +1188,8 @@ Important:
             try:
                 print(f"Generating fixed Manim code with prompt {prompt}")
                 response = await self.async_openai_client.chat.completions.create(
-                    model="anthropic/claude-3.7-sonnet",
-                    max_tokens=4096,
+                    model="anthropic/claude-3.7-sonnet:thinking",
+                    max_tokens=100000,
                     temperature=0.7,
                     messages=[
                         {"role": "system", "content": "You are a Manim expert helping to fix code for educational videos. Fix any errors in the code while maintaining its original intent and functionality."},
@@ -1217,18 +1200,15 @@ Important:
                 
                 fixed_code = response.choices[0].message.content
                 
-                # Extract just the Python code from the response (if it's wrapped in a code block)
-                if "```python" in fixed_code and "```" in fixed_code:
-                    fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
-                elif "```" in fixed_code:
-                    fixed_code = fixed_code.split("```")[1].split("```")[0].strip()
+                # Clean and preprocess the code
+                fixed_code = self._preprocess_llm_code_output(fixed_code)
                 
                 logger.info(f"Fixed Manim code for scene {scene_id}")
                 
                 # Cache the response if enabled
                 if self.use_cache and self.response_cache:
                     self.response_cache.set_cached_response(
-                        "anthropic/claude-3.7-sonnet", 
+                        "anthropic/claude-3.7-sonnet:thinking", 
                         prompt, 
                         fixed_code,
                         scene_id=f"{scene_id}_fix"

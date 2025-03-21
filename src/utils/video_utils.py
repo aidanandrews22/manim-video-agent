@@ -506,3 +506,76 @@ def create_final_video(scenes: List[Scene], output_file: str) -> str:
     
     # Stitch videos together
     return stitch_videos(video_files, output_file) 
+
+
+def clean_manim_code_file(file_path: str) -> Optional[str]:
+    """
+    Cleans a Manim code file that may contain explanatory text or non-code elements.
+    
+    Args:
+        file_path: Path to the Manim code file
+        
+    Returns:
+        Path to the cleaned file or None if cleaning failed
+    """
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        return None
+        
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+            
+        # Check for <CODE> tags
+        code_blocks = re.findall(r'<CODE>\n?(.*?)\n?</CODE>', content, re.DOTALL)
+        if code_blocks:
+            clean_code = code_blocks[0].strip()
+        # Check for markdown-style code blocks
+        elif "```python" in content and "```" in content:
+            code_parts = content.split("```python")
+            if len(code_parts) > 1:
+                clean_code = code_parts[1].split("```")[0].strip()
+            else:
+                clean_code = content  # Fallback
+        else:
+            # Try to find where explanatory text starts
+            lines = content.split('\n')
+            code_lines = []
+            in_explanatory_text = False
+            
+            for line in lines:
+                # Skip initial comments that look like explanations
+                if (not code_lines and 
+                    (line.startswith("I'll create") or 
+                     line.startswith("This animation") or
+                     line.startswith("<CODE>"))):
+                    continue
+                    
+                # Stop when we hit explanatory text
+                if line.strip() == "" and len(code_lines) > 0:
+                    next_index = lines.index(line) + 1 if line in lines and lines.index(line) < len(lines) - 1 else -1
+                    if next_index > 0 and next_index < len(lines):
+                        next_line = lines[next_index].strip()
+                        if (next_line.startswith("This ") or 
+                            next_line.startswith("The ") or 
+                            next_line.startswith("</CODE>") or
+                            re.match(r'^\d+\.', next_line)):
+                            in_explanatory_text = True
+                            break
+                
+                if not in_explanatory_text:
+                    code_lines.append(line)
+            
+            clean_code = '\n'.join(code_lines).strip()
+        
+        # Write the cleaned code to a new file
+        cleaned_file_path = file_path.replace('.py', '_cleaned.py')
+        with open(cleaned_file_path, 'w') as f:
+            f.write(clean_code)
+            
+        logger.info(f"Cleaned Manim code file saved to {cleaned_file_path}")
+        return cleaned_file_path
+        
+    except Exception as e:
+        logger.error(f"Error cleaning Manim code file: {e}")
+        return None
